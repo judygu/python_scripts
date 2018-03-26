@@ -4,7 +4,7 @@ import cx_Oracle
 import time
 
 def rawData(dateStr, table):
-    db = cx_Oracle.connect('judith_gu/Ursb_9rdUg@172.22.12.244:1535/IEST_iestprd.ib.tor.scotiabank.com')
+    db = "dummy"
 
     query = """SELECT * 
                FROM {0}
