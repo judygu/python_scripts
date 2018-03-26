@@ -16,10 +16,10 @@ ERROR_INFO = blpapi.Name("errorInfo")
 
 def _dbCon(is_uat):
     if is_uat:
-        return pyodbc.connect('DRIVER={SQL Server};SERVER=T65-EES-UAT\EES_UAT;DATABASE=Portfolio;UID=sa;PWD=123456Dma')
+        return pyodbc.connect('dummy')
+
     else:
-        return pyodbc.connect(
-            'DRIVER={SQL Server};SERVER=eessql.gss.scotia-capital.com,5150;DATABASE=Portfolio;UID=dmamso;PWD=abc1234$6')
+        return pyodbc.connect('dummy')
 
 
 def _insertDB(vol_df):
