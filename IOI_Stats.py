@@ -31,6 +31,10 @@ def log_parser(strToParse, fieldsToExtract):
 
 def main():
     ioi_analysis_df = log_parser('US Principal IOI Sender - IOIing', [])
+
+    if len(ioi_analysis_df)==0:
+        return
+
     cols = ['ticker', 'time', 'vol_discount', 'ask', 'bid', 'dailyVol', 'ioiShares','trade_duration', 'remainingVolumePct',
             'targetVolumePct']
     cols_to_rename = ['ticker', 'time', 'volDiscount(bps)', 'ask', 'bid', 'dailyVol(pct)', 'shares','tradeDuration(minutes)',
@@ -54,7 +58,7 @@ def main():
 if __name__ == "__main__":
     print "IOI_Stats"
     try:
-        mkt_close = datetime.datetime(date.today().year, date.today().month, date.today().day, 20, 0, 0)
+        mkt_close = datetime.datetime(date.today().year, date.today().month, date.today().day, 16, 0, 0)
         while (datetime.datetime.now() < mkt_close):
             main()
             time.sleep(2 * 60 * 60)
