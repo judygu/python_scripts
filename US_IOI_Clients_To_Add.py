@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import pandas
 import pyodbc
 import string
 
@@ -8,12 +7,10 @@ pd.options.display.max_columns = None
 
 
 def get_conn_prod():
-    return pyodbc.connect(
-        'DRIVER={SQL Server};SERVER=eessql.gss.scotia-capital.com,5150;DATABASE=Portfolio;UID=dmamso;PWD=abc1234$6')
-
+    return "dummy"
 
 def get_conn_uat():
-    return pyodbc.connect('DRIVER={SQL Server};SERVER=T65-EES-UAT\EES_UAT;DATABASE=Portfolio;UID=sa;PWD=123456Dma')
+    return "dummy"
 
 
 def client_name_encode(x):
@@ -61,7 +58,7 @@ def get_us_fidessa_clients():
     CUSTOMER_DETAIL_REPORT_df = CUSTOMER_DETAIL_REPORT_df[
         ~CUSTOMER_DETAIL_REPORT_df['VIEW_CODE'].str.startswith('TEST')]
     CUSTOMER_DETAIL_REPORT_df = CUSTOMER_DETAIL_REPORT_df.sort_values(['CPTY_DESC', 'VIEW_CODE'])
-
+    # CUSTOMER_DETAIL_REPORT_df['CPTY_DESC'] = CUSTOMER_DETAIL_REPORT_df['CPTY_DESC'].apply(client_name_decode)
     CUSTOMER_DETAIL_REPORT_df['SUB_NAME'] = CUSTOMER_DETAIL_REPORT_df.apply(lambda x: first_two_name(x, "CPTY_DESC"),
                                                                             axis=1)
 
@@ -78,6 +75,7 @@ def get_clients():
     client_df = client_df[client_df['NAME'].str.len() > 0]
     client_df['NAME'] = client_df['NAME'].apply(client_name_encode)
     client_df['SUB_NAME'] = client_df.apply(lambda x: first_two_name(x, "NAME"), axis=1)
+    # client_df = client_df[client_df['CLIENT_ID']<1008]
 
     return client_df
 
@@ -90,6 +88,8 @@ def get_fidessa():
 
     fidessa_df = pd.read_sql(fidessa_sql, get_conn_prod())
 
+    fidessa_df = fidessa_df[fidessa_df['FIDESSA_ID'] < 1806]
+
     return fidessa_df
 
 
@@ -99,6 +99,7 @@ def get_missing_fidessa(us_fidessa_df, fidessa_df):
     us_missing_fidessa_df = pd.merge(us_fidessa_df, fidessa_df, how='left', left_on=['VIEW_CODE'],
                                      right_on=['FIDESSA_ACCOUNT'])
     us_missing_fidessa_df = us_missing_fidessa_df[(us_missing_fidessa_df['FIDESSA_ACCOUNT'].isnull())]
+    # us_missing_fidessa_df = us_missing_fidessa_df[(us_missing_fidessa_df['FIDESSA_ID'] > 1805)]
 
     return us_missing_fidessa_df[['SUB_NAME', 'CPTY_DESC', 'VIEW_CODE']]
 
@@ -106,6 +107,7 @@ def get_missing_fidessa(us_fidessa_df, fidessa_df):
 def get_missing_client(us_missing_fidessa_df, client_df):
     missing_us_clients_df = pd.merge(us_missing_fidessa_df, client_df, how='left', on=['SUB_NAME'])
     missing_us_clients_df = missing_us_clients_df[missing_us_clients_df['CLIENT_ID'].isnull()]
+    # missing_us_clients_df = missing_us_clients_df[missing_us_clients_df['CLIENT_ID'] >= 1008]
     missing_us_clients_df = missing_us_clients_df.rename(columns={'CPTY_DESC': 'CLIENT',
                                                                   'SUB_NAME': 'SHORT_NAME',
                                                                   'VIEW_CODE': 'FIDESSA_IOI'})
@@ -140,7 +142,7 @@ def get_tiers():
     return client_tiers_df
 
 
-def get_missing_client(us_missing_fidessa_df, client_df):
+def get_missing_client_with_tier(us_missing_fidessa_df, client_df):
     missing_us_clients_df = get_missing_client(us_missing_fidessa_df, client_df)
     clients_tier_df = get_tiers()
 
@@ -181,8 +183,9 @@ def create_client_adds(us_missing_client_df):
     index_series = us_missing_client_to_add.index.to_series()
 
     max_client_id = _max_client_id()
+    max_client_id = 1007
     us_missing_client_to_add['CLIENT_ID'] = index_series.apply(
-        lambda ( idx, max_client_id): _max_add_1(idx, max_client_id))
+        lambda ( idx ): _max_add_1(idx, max_client_id))
     us_missing_client_to_add['TRADE_CHAT'] = ''
     us_missing_client_to_add['EMAIL'] = ''
     us_missing_client_to_add['STATUS'] = ''
@@ -210,26 +213,28 @@ def create_fidessa_adds(us_fidessa_df, fidessa_df):
     cols = ['FIDESSA_ID', 'FIDESSA_ACCOUNT', 'CTP', 'USTP']
     missing_fidessa_df = get_missing_fidessa(us_fidessa_df, fidessa_df)
 
-    fidessa_to_add = missing_fidessa_df[['FIDESSA_IOI']]
+    fidessa_to_add = missing_fidessa_df[['VIEW_CODE']]
     fidessa_to_add.reset_index(inplace=True)
     index_series = fidessa_to_add.index.to_series()
-    max_fidessa_id = _max_fidessa_id()
-    fidessa_to_add['FIDESSA_ID'] = index_series.apply(lambda (idx, max_fidessa_id ): _max_add_1(idx, max_fidessa_id))
+    # max_fidessa_id = _max_fidessa_id()
+    max_fidessa_id = 1805
+    print 'max fidessa id is {:d}'.format(max_fidessa_id)
+    fidessa_to_add['FIDESSA_ID'] = index_series.apply(lambda (idx): _max_add_1(idx, max_fidessa_id))
 
     fidessa_to_add['CTP'] = 0
     fidessa_to_add['USTP'] = 1
 
-    fidessa_to_add = fidessa_to_add.rename(columns={'FIDESSA_IOI': 'FIDESSA_ACCOUNT'})
+    fidessa_to_add = fidessa_to_add.rename(columns={'VIEW_CODE': 'FIDESSA_ACCOUNT'})
     fidessa_to_add = fidessa_to_add[cols]
 
     return fidessa_to_add
 
 
-def create_client_inserts(us_missing_client_df, isUAT=True):
+def insert_client(us_missing_client_df, isUAT=True):
     for row in us_missing_client_df.iterrows():
         if row[1]['NAME'] == 'AXA FOR IOI\'S':
 
-            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT_x] VALUES({:d},concat(\'AXA for IOI\',char(39),\'s\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
+            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT] (CLIENT_ID, NAME, FIDESSA_IOI, TRADE_CHAT,EMAIL,SHORT_NAME,STATUS,TM_NAME,TIER) VALUES({:d},concat(\'AXA for IOI\',char(39),\'s\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
                 .format(int(row[1]['CLIENT_ID']),
                         row[1]['FIDESSA_IOI'],
                         row[1]['TRADE_CHAT'],
@@ -241,7 +246,7 @@ def create_client_inserts(us_missing_client_df, isUAT=True):
 
         elif row[1]['NAME'] == 'MOODY\'S CORPORATION':
 
-            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT_x] VALUES({:d},concat(\'MOODY\',char(39),\'s CORPORATION\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
+            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT] (CLIENT_ID, NAME, FIDESSA_IOI, TRADE_CHAT,EMAIL,SHORT_NAME,STATUS,TM_NAME,TIER) VALUES({:d},concat(\'MOODY\',char(39),\'s CORPORATION\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
                 .format(int(row[1]['CLIENT_ID']),
                         row[1]['FIDESSA_IOI'],
                         row[1]['TRADE_CHAT'],
@@ -252,7 +257,7 @@ def create_client_inserts(us_missing_client_df, isUAT=True):
                         int(row[1]['TIER']))
         elif row[1]['NAME'] == 'SCI FOR ETF\'S':
 
-            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT_x] VALUES({:d},concat(\'SCI FOR ETF\',char(39),\'s\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
+            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT] (CLIENT_ID, NAME, FIDESSA_IOI, TRADE_CHAT,EMAIL,SHORT_NAME,STATUS,TM_NAME,TIER) VALUES({:d},concat(\'SCI FOR ETF\',char(39),\'s\'),\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
                 .format(int(row[1]['CLIENT_ID']),
                         row[1]['FIDESSA_IOI'],
                         row[1]['TRADE_CHAT'],
@@ -263,7 +268,7 @@ def create_client_inserts(us_missing_client_df, isUAT=True):
                         int(row[1]['TIER']))
 
         else:
-            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT_x] VALUES({:d},\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
+            insert_client_sql = 'INSERT INTO Portfolio.dbo.[CLIENT] (CLIENT_ID, NAME, FIDESSA_IOI, TRADE_CHAT,EMAIL,SHORT_NAME,STATUS,TM_NAME,TIER) VALUES({:d},\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d})' \
                 .format(int(row[1]['CLIENT_ID']),
                         row[1]['NAME'],
                         row[1]['FIDESSA_IOI'],
@@ -278,64 +283,318 @@ def create_client_inserts(us_missing_client_df, isUAT=True):
 
         if isUAT:
             con = get_conn_uat()
-        else:
-            cont = get_conn_prod()
+            con.execute(insert_client_sql)
+            con.commit()
 
-        con.execute(insert_client_sql)
-        con.commit()
-
-
-def create_fidessa_inserts(missing_fidessa_df, isUAT=True):
-    for row in missing_fidessa_df.iterrows():
-
-        insert_fidessa_sql = 'INSERT INTO Portfolio.dbo.[FIDESSA] VALUES({:d},\'{:s}\',{:d},{:d})' \
-            .format(int(row[1]['FIDESSA_ID']), row[1]['FIDESSA_ACCOUNT'], int(row[1]['CTP']), int(row[1]['USTP']))
-        print insert_fidessa_sql
-
-        if isUAT:
-            con = get_conn_uat()
         else:
             con = get_conn_prod()
+            id_on = "SET IDENTITY_INSERT CLIENT ON"
+            id_off = "SET IDENTITY_INSERT CLIENT OFF"
+            con.execute(id_on)
+            con.execute(insert_client_sql)
+            con.execute(id_off)
+            con.commit()
 
-        con.execute(insert_fidessa_sql)
-        con.commit()
+
+def insert_fidessa(missing_fidessa_df, isUAT=True):
+    for row in missing_fidessa_df.iterrows():
+
+        if isUAT:
+            insert_fidessa_sql = 'INSERT INTO Portfolio.dbo.[FIDESSA] VALUES({:d},\'{:s}\',{:d},{:d})' \
+                .format(int(row[1]['FIDESSA_ID']), row[1]['FIDESSA_ACCOUNT'], int(row[1]['CTP']), int(row[1]['USTP']))
+            print insert_fidessa_sql
+
+            con = get_conn_uat()
+
+            con.execute(insert_fidessa_sql)
+            con.commit()
+        else:
+
+            insert_fidessa_sql = 'INSERT INTO Portfolio.dbo.[FIDESSA] (FIDESSA_ID, FIDESSA_ACCOUNT,CTP,USTP ) VALUES({:d},\'{:s}\',{:d},{:d})' \
+                .format(int(row[1]['FIDESSA_ID']), str(row[1]['FIDESSA_ACCOUNT']), int(row[1]['CTP']),
+                        int(row[1]['USTP']))
+            print insert_fidessa_sql
+
+            con = get_conn_prod()
+
+            id_on = "SET IDENTITY_INSERT FIDESSA ON"
+            id_off = "SET IDENTITY_INSERT FIDESSA OFF"
+            con.execute(id_on)
+            con.execute(insert_fidessa_sql)
+            con.execute(id_off)
+            con.commit()
 
 
 def client_fidessa_to_add(missing_client_df, client_to_add_df, fidessa_to_add_df):
-
     # missing_client_df is 1 client name to many fidessa account
     # client_to_add_dif is 1 client name to 1 fidessa, and it also has the right clientID
 
     missing_client_df['CLIENT'] = missing_client_df['CLIENT'].apply(client_name_decode)
-    client_to_fidessa = pd.merge(fidessa_to_add_df,client_to_add_df,how='left',
-                                    left_on=['FIDESSA_ACCOUNT'],
-                                    right_on=['FIDESSA_IOI'])
+    client_to_fidessa = pd.merge(fidessa_to_add_df, missing_client_df, how='left',
+                                 left_on=['FIDESSA_ACCOUNT'],
+                                 right_on=['FIDESSA_IOI'])
 
-    client_to_fidessa = client_to_fidessa[['FIDESSA_ID','CLIENT']]
+    client_to_fidessa = client_to_fidessa[['FIDESSA_ID', 'CLIENT']]
 
     client_to_fidessa = pd.merge(client_to_fidessa,
-                                    client_to_add_df,
-                                    how='left',
-                                    left_on=['CLIENT'],
-                                    right_on=['NAME'])
+                                 client_to_add_df,
+                                 how='left',
+                                 left_on=['CLIENT'],
+                                 right_on=['NAME'])
 
-    return client_to_fidessa[['CLIENT_ID','FIDESSA_ID']]
+    return client_to_fidessa[['CLIENT_ID', 'FIDESSA_ID']]
 
 
-def create_client_fidessa_inserts(client_to_fidessa, isUAT=True):
-
+def insert_client_fidessa(client_to_fidessa, isUAT=True):
     for row in client_to_fidessa.iterrows():
-        insert_client_fidessa_sql = 'INSERT INTO Portfolio.dbo.CLIENT_FIDESSA VALUES({:d},{:d})' \
-            .format(int(row[1]['CLIENT_ID']),int(row[1]['FIDESSA_ID']))
+        insert_client_fidessa_sql = 'INSERT INTO Portfolio.dbo.CLIENT_FIDESSA (CLIENT_ID, FIDESSA_ID) VALUES({:d},{:d})' \
+            .format(int(row[1]['CLIENT_ID']), int(row[1]['FIDESSA_ID']))
         print insert_client_fidessa_sql
+
+        if isUAT:
+            con = get_conn_uat()
+            con.execute(insert_client_fidessa_sql)
+            con.commit()
+
+        else:
+            con = get_conn_prod()
+            id_on = "SET IDENTITY_INSERT CLIENT_FIDESSA ON"
+            id_off = "SET IDENTITY_INSERT CLIENT_FIDESSA OFF"
+            con.execute(id_on)
+            con.execute(insert_client_fidessa_sql)
+            con.execute(id_off)
+            con.commit()
+
+
+def table_backup(db, table, isUAT=True):
+    select_sql = 'select * from {:s}.dbo.{:s}'.format(db, table)
+
+    if isUAT:
+        con = get_conn_uat()
+    else:
+        con = get_conn_prod()
+
+    df = pd.read_sql(select_sql, con)
+
+    file_name = 'C:\Temp\{:s}.csv'.format(table)
+
+    print len(df), file_name
+    df.to_csv(file_name)
+    return
+
+
+def ioiTargets():
+    US_IOI_Targets_df = pd.read_csv("C:\Temp\IOI_targets.csv")
+    US_IOI_Targets_df = US_IOI_Targets_df[~US_IOI_Targets_df['Counterparty'].isnull()]
+    US_IOI_Targets_df = US_IOI_Targets_df[US_IOI_Targets_df['Active'] == 1]
+    US_IOI_Targets_df = US_IOI_Targets_df[['Description', 'Service', 'Terminal']]
+    US_IOI_Targets_df = US_IOI_Targets_df.rename(columns={'Description': 'CLIENT',
+                                                          'Service': 'VENDOR',
+                                                          'Terminal': 'ROUTING_ID'
+                                                          })
+    US_IOI_Targets_df = US_IOI_Targets_df.sort_values(['ROUTING_ID', 'VENDOR'])
+    US_IOI_Targets_df.drop_duplicates(inplace=True)
+
+    return US_IOI_Targets_df
+
+
+def current_ioiTargets():
+    # Existing IOI Targets
+    IOI_target_sql = "SELECT [IOITARGET_ID],[ROUTING_ID],[VENDOR] FROM [Portfolio].[dbo].[IOITARGET]"
+    IOI_target_df = pd.read_sql(IOI_target_sql, get_conn_prod())
+    IOI_target_df['VENDOR'] = IOI_target_df['VENDOR'].map(string.upper)
+
+    return IOI_target_df
+
+
+def ioiTarget_to_add(US_IOI_Targets_df, current_IOI_Targets_df):
+    cols = ['IOITARGET_ID', 'ROUTING_ID', 'VENDOR']
+
+    Missing_IOI_Targets_df = pd.merge(US_IOI_Targets_df, current_IOI_Targets_df, how='left',
+                                      on=['ROUTING_ID', 'VENDOR'])
+    Missing_IOI_Targets_df = Missing_IOI_Targets_df[Missing_IOI_Targets_df['IOITARGET_ID'].isnull()]
+
+    IOI_Targets_To_Add = Missing_IOI_Targets_df[['ROUTING_ID', 'VENDOR']]
+    IOI_Targets_To_Add.drop_duplicates(inplace=True)
+    IOI_Targets_To_Add.reset_index(inplace=True, drop=True)
+    index_series = IOI_Targets_To_Add.index.to_series()
+
+    max_IOI_Target_ID = max(current_IOI_Targets_df['IOITARGET_ID'])
+    IOI_Targets_To_Add['IOITARGET_ID'] = index_series.apply(lambda (idx): _max_add_1(idx, max_IOI_Target_ID))
+
+    IOI_Targets_To_Add = IOI_Targets_To_Add[cols]
+
+    return IOI_Targets_To_Add
+
+
+def insertIOITarget(ioiTarget_to_add_df, isUAT=True):
+    for row in ioiTarget_to_add_df.iterrows():
+        insert_IOITARGET_sql = 'INSERT INTO Portfolio.dbo.IOITARGET (IOITARGET_ID, ROUTING_ID, VENDOR) VALUES({:d},\'{:s}\',\'{:s}\')' \
+            .format(int(row[1]['IOITARGET_ID']), str(row[1]['ROUTING_ID']), str(row[1]['VENDOR']))
+        print insert_IOITARGET_sql
 
         if isUAT:
             con = get_conn_uat()
         else:
             con = get_conn_prod()
 
-        con.execute(insert_client_fidessa_sql)
+        id_on = "SET IDENTITY_INSERT IOITARGET ON"
+        id_off = "SET IDENTITY_INSERT IOITARGET OFF"
+        con.execute(id_on)
+        con.execute(insert_IOITARGET_sql)
+        con.execute(id_off)
         con.commit()
 
 
+def get_missing_Client_IOI_Target():
+    missing_us_clients_df = get_clients()
+    missing_us_clients_df = missing_us_clients_df[missing_us_clients_df['CLIENT_ID'] >= 1008]
 
+    current_ioiTargets_df = current_ioiTargets()
+    US_IOI_Targets_df = ioiTargets()
+
+    current_ioiTargets_df = pd.merge(current_ioiTargets_df, US_IOI_Targets_df, how='left', on=['VENDOR', 'ROUTING_ID'])
+    current_ioiTargets_df = current_ioiTargets_df[~current_ioiTargets_df['CLIENT'].isnull()]
+    current_ioiTargets_df['CLIENT'] = current_ioiTargets_df['CLIENT'].map(str)
+    current_ioiTargets_df['SUB_NAME'] = current_ioiTargets_df.apply(lambda x: first_two_name(x, "CLIENT"),
+                                                                    axis=1)
+
+    missing_client_ioiTargets_df = pd.merge(missing_us_clients_df, current_ioiTargets_df,
+                                            how='left',
+                                            on=['SUB_NAME'])
+
+    missing_client_ioiTargets_df = missing_client_ioiTargets_df[['CLIENT_ID', 'VENDOR', 'ROUTING_ID']]
+    missing_client_ioiTargets_df = missing_client_ioiTargets_df[~missing_client_ioiTargets_df['ROUTING_ID'].isnull()]
+    missing_client_ioiTargets_df.drop_duplicates(inplace=True)
+
+    return missing_client_ioiTargets_df
+
+
+def client_ioiTaraget_to_add(missing_client_ioiTargets_df):
+    current_ioiTargets_df = current_ioiTargets()
+    client_ioitarget_to_add = pd.merge(missing_client_ioiTargets_df,
+                                       current_ioiTargets_df,
+                                       how='left',
+                                       on=['VENDOR', 'ROUTING_ID'])
+
+    client_ioitarget_to_add = client_ioitarget_to_add[['CLIENT_ID', 'IOITARGET_ID']]
+
+    return client_ioitarget_to_add
+
+
+def insertClientIOITarget(client_ioiTaraget_to_add_df, isUAT=True):
+    for row in client_ioiTaraget_to_add_df.iterrows():
+        insert_CLIENT_IOITARGET_sql = 'INSERT INTO Portfolio.dbo.CLIENT_IOITARGET (CLIENT_ID,IOITARGET_ID) VALUES({:d},{:d})' \
+            .format(int(row[1]['CLIENT_ID']), int(row[1]['IOITARGET_ID']))
+        print insert_CLIENT_IOITARGET_sql
+
+        if isUAT:
+            con = get_conn_uat()
+            con.execute(insert_CLIENT_IOITARGET_sql)
+            con.commit()
+        else:
+            con = get_conn_prod()
+            con.execute(insert_CLIENT_IOITARGET_sql)
+            con.commit()
+
+
+def clientFidessaIOIMapping():
+    sql = "SELECT C.NAME, C.SHORT_NAME, F.FIDESSA_ACCOUNT, F.FIDESSA_ID, F.CTP, F.USTP, C.CLIENT_ID, C.TM_NAME, I.IOITARGET_ID, I.ROUTING_ID, I.VENDOR FROM"
+    sql += " [Portfolio].[dbo].CLIENT AS C"
+    sql += " INNER JOIN [Portfolio].[dbo].CLIENT_FIDESSA AS CF"
+    sql += " ON C.CLIENT_ID = CF.CLIENT_ID"
+    sql += " INNER JOIN [Portfolio].[dbo].FIDESSA AS F"
+    sql += " ON F.FIDESSA_ID = CF.FIDESSA_ID"
+    sql += " INNER JOIN [Portfolio].[dbo].[CLIENT_IOITARGET] AS CIOI"
+    sql += " ON CIOI.CLIENT_ID = CF.CLIENT_ID"
+    sql += " INNER JOIN [Portfolio].[dbo].[IOITARGET] AS I"
+    sql += " ON I.IOITARGET_ID = CIOI.IOITARGET_ID"
+    sql += " and I.IOITARGET_ID > 1065"
+    sql += " order by C.NAME, C.SHORT_NAME"
+
+    client_fidesssa_ioi_df = pd.read_sql(sql, get_conn_prod())
+
+    return client_fidesssa_ioi_df
+
+clientFidessaMapping = clientFidessaIOIMapping()
+
+def clientFidessaMapping():
+
+    sql = "SELECT C.NAME, C.SHORT_NAME, F.FIDESSA_ACCOUNT, F.FIDESSA_ID, F.CTP, F.USTP, C.CLIENT_ID, C.TM_NAME FROM"
+    sql += " [Portfolio].[dbo].CLIENT AS C"
+    sql += " INNER JOIN [Portfolio].[dbo].CLIENT_FIDESSA AS CF"
+    sql += " ON C.CLIENT_ID = CF.CLIENT_ID"
+    sql += " INNER JOIN [Portfolio].[dbo].FIDESSA AS F"
+    sql += " ON F.FIDESSA_ID = CF.FIDESSA_ID"
+    sql += " order by C.NAME, C.SHORT_NAME"
+
+    client_fidesssa_df = pd.read_sql(sql, get_conn_prod())
+
+    return client_fidesssa_df
+
+# clientFidessaMapping = clientFidessaMapping()
+# run codes...
+
+def add_fidessa_account():
+    us_fidessa_df = get_us_fidessa_clients()
+    fidessa_df = get_fidessa()
+
+    fidessa_to_add_df = create_fidessa_adds(us_fidessa_df, fidessa_df)
+    insert_fidessa(fidessa_to_add_df, isUAT=False)
+
+
+# fidessa = add_fidessa_account()
+
+def add_client():
+    us_fidessa_df = get_us_fidessa_clients()
+    fidessa_df = get_fidessa()
+    raw_missing_client_df = get_missing_fidessa(us_fidessa_df, fidessa_df)
+    client_df = get_clients()
+    missing_client_with_tiers_df = get_missing_client_with_tier(raw_missing_client_df, client_df)
+    clients_to_add_df = create_client_adds(missing_client_with_tiers_df);
+    insert_client(clients_to_add_df, isUAT=True)
+
+
+# client = add_client()
+
+def add_client_fidessa():
+    us_fidessa_df = get_us_fidessa_clients()
+    fidessa_df = get_fidessa()
+    fidessa_to_add_df = create_fidessa_adds(us_fidessa_df, fidessa_df)
+
+    # get the client name back
+    fidessa_to_add_df = pd.merge(fidessa_to_add_df, us_fidessa_df, how='left', left_on=['FIDESSA_ACCOUNT'],
+                                 right_on=['VIEW_CODE'])
+
+    # get stored client
+    client_df = get_clients()
+    client_df.sort_values(['SUB_NAME'], inplace=True)
+
+    client_fidessa_to_add_df = pd.merge(fidessa_to_add_df, client_df, how='left', on=['SUB_NAME'])
+    client_fidessa_to_add_df = client_fidessa_to_add_df[~client_fidessa_to_add_df['CLIENT_ID'].isnull()]
+    client_fidessa_to_add_df = client_fidessa_to_add_df[['CLIENT_ID', 'FIDESSA_ID']]
+
+    insert_client_fidessa(client_fidessa_to_add_df, isUAT=False)
+
+
+# client_fidessa = add_client_fidessa()
+
+def add_ioiTarget():
+    US_IOI_Targets_df = ioiTargets()
+    current_IOI_Targets_df = current_ioiTargets()
+    ioiTarget_to_add_df = ioiTarget_to_add(US_IOI_Targets_df, current_IOI_Targets_df)
+
+    insertIOITarget(ioiTarget_to_add_df, isUAT=False)
+
+
+# add_ioiTarget()
+
+
+def add_client_ioiTarget():
+    missing_client_IOITarget_df = get_missing_Client_IOI_Target()
+    client_ioiTaraget_to_add_df = client_ioiTaraget_to_add(missing_client_IOITarget_df)
+
+    insertClientIOITarget(client_ioiTaraget_to_add_df, isUAT=False)
+
+
+# add_client_ioiTarget()
