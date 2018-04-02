@@ -2,16 +2,16 @@ import pandas as pd
 import numpy as np
 import pyodbc
 import string
+import re
 
 pd.options.display.max_columns = None
 
 
 def get_conn_prod():
-    return "dummy"
+    return 'dummy'
 
 def get_conn_uat():
-    return "dummy"
-
+    return 'dummy'
 
 def client_name_encode(x):
     x = x.encode('utf-8').strip()
@@ -36,9 +36,11 @@ def first_two_name(row, field):
 
     if field == 'CLIENT_NAME' and row[field] == 'WILLBLAIR':
         sub_name = 'WILLIAM BLAIR'
-    if field == 'CPTY_DESC' and row[field] == 'CITADEL (SURVEYOR)':
+    elif field == 'CLIENT' and row[field] == 'Blackrock Financial Management':
+        sub_name = 'Blackrock Inc.'
+    elif field == 'CPTY_DESC' and row[field] == 'CITADEL (SURVEYOR)':
         sub_name = 'Citadel Investment'
-    if field == 'CPTY_DESC' and row[field] == 'CAPGROUP (CAPITAL RESEARCH & MGMT)':
+    elif field == 'CPTY_DESC' and row[field] == 'CAPGROUP (CAPITAL RESEARCH & MGMT)':
         sub_name = 'CAPITAL RESEARCH'
 
     elif len(sub_names) == 1:
@@ -78,6 +80,21 @@ def get_clients():
     # client_df = client_df[client_df['CLIENT_ID']<1008]
 
     return client_df
+
+
+def get_clients_all_cols(con):
+    client_sql = "SELECT *" \
+                 " FROM CLIENT" \
+                 " order by CLIENT_ID, NAME"
+
+    client_df = pd.read_sql(client_sql, con)
+    client_df = client_df[client_df['NAME'].str.len() > 0]
+    client_df['NAME'] = client_df['NAME'].apply(client_name_encode)
+    client_df['SUB_NAME'] = client_df.apply(lambda x: first_two_name(x, "NAME"), axis=1)
+    # client_df = client_df[client_df['CLIENT_ID']<1008]
+
+    return client_df
+
 
 
 def get_fidessa():
@@ -516,10 +533,10 @@ def clientFidessaIOIMapping():
 
     return client_fidesssa_ioi_df
 
-clientFidessaMapping = clientFidessaIOIMapping()
+
+# clientFidessaMapping = clientFidessaIOIMapping()
 
 def clientFidessaMapping():
-
     sql = "SELECT C.NAME, C.SHORT_NAME, F.FIDESSA_ACCOUNT, F.FIDESSA_ID, F.CTP, F.USTP, C.CLIENT_ID, C.TM_NAME FROM"
     sql += " [Portfolio].[dbo].CLIENT AS C"
     sql += " INNER JOIN [Portfolio].[dbo].CLIENT_FIDESSA AS CF"
@@ -531,6 +548,151 @@ def clientFidessaMapping():
     client_fidesssa_df = pd.read_sql(sql, get_conn_prod())
 
     return client_fidesssa_df
+
+# def dupeTierByClient():
+
+#     SELECT C.NAME,F.FIDESSA_ACCOUNT, F.CTP, F.USTP, C.CLIENT_ID, C.TM_NAME,C.TIER, C.TIER_US, I.ROUTING_ID, I.VENDOR FROM
+# [Portfolio].[dbo].CLIENT AS C
+# INNER JOIN [Portfolio].[dbo].CLIENT_FIDESSA AS CF
+# ON C.CLIENT_ID = CF.CLIENT_ID
+# INNER JOIN [Portfolio].[dbo].FIDESSA AS F
+# ON F.FIDESSA_ID = CF.FIDESSA_ID
+# INNER JOIN [Portfolio].[dbo].[CLIENT_IOITARGET] AS CIOI
+# ON CIOI.CLIENT_ID = CF.CLIENT_ID
+# INNER JOIN [Portfolio].[dbo].[IOITARGET] AS I
+# ON I.IOITARGET_ID = CIOI.IOITARGET_ID
+# where I.ROUTING_ID in ('OPCE','OPPE','MFC','JHAN','TDNYFX42','TDSI','ZIFF','588','CAPG','CAPGIOI','CITA','CPRE','DBK','DEUT','DWS')
+# order by I.ROUTING_ID,C.NAME, C.SHORT_NAME
+#
+# update [Portfolio].[dbo].CLIENT
+# set TIER_US=1
+# where CLIENT_ID in (1329)
+
+def ioiTarget( x):
+    x = str(x)
+    if not x:
+        return ''
+    else:
+        re_1 = re.search('_IOI',x )
+        if re_1 is None:
+            return ''
+        else:
+            endPos = re_1.start()
+
+        re_2 = re.search('RoutingID=""""', x )
+        if re_2 is None:
+            return ''
+        else:
+            startPos = re_2.end()
+
+        return x[startPos:endPos]
+
+def _addQuotes(x):
+    return ''.join(["'",x,"'"])
+
+# tier_df = pd.read_csv("C:\Temp\\tier2.csv")
+# tier_df = tier_df[(tier_df['Tier2'].str.startswith('RoutingID')) | (tier_df['Tier1'].str.startswith('RoutingID'))]
+# tier_df['Tier2_x'] = tier_df[['Tier2']].apply(ioiTarget,axis=1)
+# tier_df['Tier1_x'] = tier_df[['Tier1']].apply(ioiTarget,axis=1)
+# ','.join(list(tier_df['Tier1_x'].map(_addQuotes)))
+
+def dropTable(tableName):
+    drop_table_sql = 'drop table {}'.format(tableName)
+    uat_con = get_conn_uat()
+    uat_con.execute(drop_table_sql)
+    uat_con.commit()
+
+
+def createClientTable():
+    create_client_sql = "CREATE TABLE Portfolio.dbo.CLIENT_x (CLIENT_ID int not null, \
+                                                                    NAME nvarchar(128) not null, \
+                                                                    FIDESSA_IOI nvarchar(max) null, \
+                                                                    TRADE_CHAT nvarchar(128) null, \
+                                                                    EMAIL nvarchar(256) null, \
+                                                                    SHORT_NAME nvarchar(128) null,\
+                                                                    STATUS nvarchar(max) null, \
+                                                                    TM_NAME nvarchar(max) null, \
+                                                                    TIER int null, \
+                                                                    PRIMARY KEY (CLIENT_ID))"
+
+    uat_con = get_conn_uat()
+    uat_con.execute(create_client_sql)
+    uat_con.commit()
+
+
+def updateUSTier(isUAT=True):
+    def _update(client_id, tier):
+
+        update_sql = "update [Portfolio].[dbo].[CLIENT]"
+        update_sql += " set TIER_US={}".format(tier)
+        update_sql += " where CLIENT_ID={}".format(client_id)
+
+        print update_sql
+
+        if isUAT:
+            con = get_conn_uat()
+        else:
+            con = get_conn_prod()
+
+        con.execute(update_sql)
+        con.commit()
+
+    tiers_df = get_tiers()
+    tiers_df['SUB_NAME'] = tiers_df.apply(lambda (x): first_two_name(x, 'CLIENT'), axis=1)
+    client_df = get_clients()
+    client_df = pd.merge(client_df, tiers_df, how='left', on=['SUB_NAME'])
+
+    for row in client_df.iterrows():
+        if not np.isnan(row[1]['TIER']):
+            _update(int(row[1]['CLIENT_ID']), int(row[1]['TIER']))
+
+# updateUSTier()
+
+def updateUSTier_2(isUAT=True):
+    def _update(client_id, tier, con):
+
+        update_sql = "update [Portfolio].[dbo].[CLIENT]"
+        update_sql += " set TIER_US={}".format(tier)
+        update_sql += " where CLIENT_ID={}".format(client_id)
+
+        print update_sql
+
+        con.execute(update_sql)
+        con.commit()
+
+    con = get_conn_uat() if isUAT else get_conn_prod()
+    client_df = get_clients_all_cols(con)
+    count = 0
+
+    for row in client_df.iterrows():
+        if (not np.isnan(row[1]['TIER'])) and (np.isnan(row[1]['TIER_US'])):
+            if row[1]['TIER'] > 0 and row[1]['TIER'] <= 8:
+                _update(int(row[1]['CLIENT_ID']), 2, con)
+        elif row[1]['TIER_US'] == 3:
+            _update(int(row[1]['CLIENT_ID']), 9, con)
+            count = count+1
+            print 'updated total{}'.format(count)
+
+
+updateUSTier_2(isUAT=False)
+
+def setTIER2Null(isUAT=True):
+
+    update_sql = "update [Portfolio].[dbo].[CLIENT]"
+    update_sql += " set TIER=NULL"
+    update_sql += " where CLIENT_ID >= 1008"
+
+    print update_sql
+
+    if isUAT:
+        con = get_conn_uat()
+    else:
+        con = get_conn_prod()
+
+    con.execute(update_sql)
+    con.commit()
+
+# setTIER2Null(isUAT=False)
 
 # clientFidessaMapping = clientFidessaMapping()
 # run codes...
@@ -595,6 +757,5 @@ def add_client_ioiTarget():
     client_ioiTaraget_to_add_df = client_ioiTaraget_to_add(missing_client_IOITarget_df)
 
     insertClientIOITarget(client_ioiTaraget_to_add_df, isUAT=False)
-
 
 # add_client_ioiTarget()
